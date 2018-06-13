@@ -17,10 +17,16 @@ namespace AlexaSkill
 {
     public class DotNetApplet : SpeechletAsync
     {
+        private static StateMachine _stateMachine;
         private string GetSensorStateIntentName = "GetSensorState";
         private string SetSensorStateIntentName = "SetSensorState";
         private static HubConfiguration configuration = HubConfiguration.GetConfiguration("settings.json");
-        private CancellationTokenSource cts = new CancellationTokenSource();
+
+        public DotNetApplet(StateMachine stateMachine)
+        {
+            _stateMachine = stateMachine;
+        }
+
         /// <summary>
         /// Creates and returns the visual and spoken response with shouldEndSesion flag
         /// </summary>
@@ -98,6 +104,35 @@ namespace AlexaSkill
             return userId;
         }
 
+        public StateEntity WaitForUpdatedState(StateEntity currentState, string userId, string controller, string sensor, int timeoutMiliseconds)
+        {
+            CancellationTokenSource cts = new CancellationTokenSource();
+            var task = Task<StateEntity>.Factory.StartNew((taskState) =>
+            {
+                var token = (CancellationToken)taskState;
+                while (!token.IsCancellationRequested)
+                {
+                    StateEntity stateEntity;
+                    if (_stateMachine.TryGetSensorState(userId, controller, sensor, out stateEntity))
+                    {
+                        if (currentState == null || stateEntity.Timestamp > currentState.Timestamp)
+                            return stateEntity;
+                    }
+
+                    Thread.Sleep(100);
+                }
+
+                return null;
+            }, cts.Token, cts.Token);
+
+            if (!task.Wait(timeoutMiliseconds, cts.Token))
+            {
+                cts.Cancel();
+            }
+
+            return task.Result;
+        }
+
         public async override Task<SpeechletResponse> OnIntentAsync(IntentRequest intentRequest, Session session)
         {
             if (string.IsNullOrEmpty(session.User.AccessToken))
@@ -108,11 +143,31 @@ namespace AlexaSkill
 
             string userId = GetUserIdFromSession(session.User.AccessToken);
 
+            string controller = "myController";
+            string sensor = "mySensor";
+
+            // GET state request
             if (GetSensorStateIntentName.Equals(intentName))
             {
-                var result = await SendMessageToHubAsync(true, RequestType.GET, userId);
-                return BuildSpeechletResponse("Get state of sensor", $"A message has been sent to query your sensor", true);
+                StateEntity stateEntity = null;
+                if (_stateMachine.TryGetSensorState(userId, controller, sensor, out stateEntity))
+                {
+                    if (_stateMachine.IsEntityUpToDate(stateEntity))
+                    {
+                        return BuildSpeechletResponse("Get state of sensor", $"Your sensor is {stateEntity.State}", true);
+                    }
+                }
+
+                var result = await SendMessageToHubAsync(true, RequestType.GET, $"{userId}{controller}");
+                StateEntity newState = WaitForUpdatedState(stateEntity, userId, controller, sensor, 2000);
+                if (newState == null)
+                {
+                    return BuildSpeechletResponse("Get state of sensor", $"A message was sent to get the state of the sensor but we didn't get a response.", true);
+                }
+                return BuildSpeechletResponse("Get state of sensor", $"Your sensor is {newState.State}", true);
             }
+
+            //SET state request
             if (SetSensorStateIntentName.Equals(intentName))
             {
                 Slot state;

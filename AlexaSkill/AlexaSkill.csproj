@@ -21,6 +21,7 @@
     <PackageReference Include="Safern.Hub.ReaderSender" Version="1.0.6" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="2.0.0-preview2-final" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="2.0.0-preview2-final" />
+    <PackageReference Include="WindowsAzure.Storage" Version="8.2.1" />
   </ItemGroup>
 
   <ItemGroup>
